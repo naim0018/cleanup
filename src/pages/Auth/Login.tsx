@@ -35,7 +35,8 @@ export default function Login() {
         navigate("/");
       } else {
         // Redirect to our backend's OAuth endpoint which will handle the GitHub flow
-        window.location.href = "http://localhost:3001/auth/github";
+        const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+        window.location.href = `${apiBase}/auth/github`;
       }
     } catch (error) {
       alert("Failed to authenticate.");

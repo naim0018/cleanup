@@ -65,7 +65,7 @@ interface DetectedThreat {
   cleanedCode: string;
   isCleaned: boolean;
 }
-
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
 const Home = () => {
   // Authentication states
@@ -126,7 +126,7 @@ const Home = () => {
   // Fetch rate limit
   const fetchRateLimit = async (token: string) => {
     try {
-      const res = await fetch("http://localhost:3001/github/rate-limit", {
+      const res = await fetch(`${API_BASE_URL}/github/rate-limit`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) setRateLimit(await res.json());
@@ -160,8 +160,8 @@ const Home = () => {
 
       // Fetch repos and orgs in parallel
       const [reposRes, orgsRes] = await Promise.all([
-        fetch("http://localhost:3001/github/repos", { headers: authHeaders }),
-        fetch("http://localhost:3001/github/orgs", { headers: authHeaders }),
+        fetch(`${API_BASE_URL}/github/repos`, { headers: authHeaders }),
+        fetch(`${API_BASE_URL}/github/orgs`, { headers: authHeaders }),
       ]);
 
       if (!reposRes.ok) throw new Error(await reposRes.text());
@@ -184,7 +184,7 @@ const Home = () => {
 
           // Fetch and merge scan history from MongoDB
           try {
-            const historyRes = await fetch(`http://localhost:3001/github/history?githubLogin=${orgData.user.login}`, {
+            const historyRes = await fetch(`${API_BASE_URL}/github/history?githubLogin=${orgData.user.login}`, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (historyRes.ok) {
@@ -302,7 +302,7 @@ const Home = () => {
       const repo = repositories.find((r) => r.id === threat.repoId);
       if (!repo) continue;
       try {
-        const response = await fetch("http://localhost:3001/github/clean", {
+        const response = await fetch(`${API_BASE_URL}/github/clean`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -369,7 +369,7 @@ const Home = () => {
     addLog(`Connecting EventSource log listener...`, "info");
 
     // Connect to Server Sent Events for live logs
-    const eventSource = new EventSource(`http://localhost:3001/github/scan-events?fullName=${repo.fullName}`);
+    const eventSource = new EventSource(`${API_BASE_URL}/github/scan-events?fullName=${repo.fullName}`);
     eventSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
@@ -390,7 +390,7 @@ const Home = () => {
     }, 250);
 
     try {
-      const response = await fetch(`http://localhost:3001/github/scan?fullName=${repo.fullName}&repoId=${repo.id}&githubLogin=${activeOwnerTab}`, {
+      const response = await fetch(`${API_BASE_URL}/github/scan?fullName=${repo.fullName}&repoId=${repo.id}&githubLogin=${activeOwnerTab}`, {
         headers: {
           "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
         }
@@ -460,7 +460,7 @@ const Home = () => {
 
     try {
       const repo = repositories.find((r) => r.id === threat.repoId);
-      const response = await fetch("http://localhost:3001/github/clean", {
+      const response = await fetch(`${API_BASE_URL}/github/clean`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -526,7 +526,7 @@ const Home = () => {
     for (const threat of repoThreats) {
       try {
         addLog(`Patching file: ${threat.filePath}...`, "info");
-        const response = await fetch("http://localhost:3001/github/clean", {
+        const response = await fetch(`${API_BASE_URL}/github/clean`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
