@@ -26,7 +26,7 @@ export const generateZodSchema = (fields: FieldConfig[]) => {
       case "tel":
         validator = z
           .string()
-          .regex(/^[\d\s\-\+\(\)]+$/, "Invalid phone number");
+          .regex(/^[\d\s\-+()]+$/, "Invalid phone number");
         break;
 
       case "text":

@@ -3,8 +3,6 @@ import { Link, useLocation } from "react-router-dom";
 import { 
   ShieldCheck, 
   LayoutDashboard, 
-  History, 
-  Settings,
   LogOut
 } from "lucide-react";
 

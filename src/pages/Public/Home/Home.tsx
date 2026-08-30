@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 
 import {
   Github,
-  Shield,
   ShieldAlert,
   ShieldCheck,
   RefreshCw,
@@ -11,15 +10,10 @@ import {
   AlertTriangle,
   Play,
   Trash2,
-  Eye,
   Terminal,
   Info,
-  ExternalLink,
-  Lock,
-  Search,
   FileCode,
   Check,
-  Settings,
   ArrowRight,
   Flame,
   Bug
@@ -128,9 +122,10 @@ const Home = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/github/rate-limit`, {
         headers: { Authorization: `Bearer ${token}` },
-      });
       if (res.ok) setRateLimit(await res.json());
-    } catch (_) { }
+    } catch {
+      // ignore
+    }
   };
 
   // Repos filtered by active owner tab
@@ -149,6 +144,7 @@ const Home = () => {
   
   useEffect(() => {
     fetchRepositories();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchRepositories = async () => {
@@ -170,11 +166,9 @@ const Home = () => {
 
       // Merge saved scan history from MongoDB
       const token = localStorage.getItem("github_pat") || "";
-      let githubLoginLocal = "";
       try {
         if (orgsRes.ok) {
           const orgData = await orgsRes.json();
-          githubLoginLocal = orgData.user?.login || "";
           const tabs: OwnerTab[] = [
             { login: orgData.user.login, type: "User" },
             ...orgData.orgs,
@@ -208,13 +202,13 @@ const Home = () => {
             } else {
               setRepositories(repos);
             }
-          } catch (_) {
+          } catch {
             setRepositories(repos);
           }
         } else {
           setRepositories(repos);
         }
-      } catch (_) {
+      } catch {
         setRepositories(repos);
       }
 
@@ -225,23 +219,9 @@ const Home = () => {
       addLog("Successfully authenticated! Fetched live repository list.", "success");
     } catch (err: any) {
       addLog(`Authentication failed: ${err.message || err}`, "error");
-    } finally {
-
     }
   };
 
-  const handleDisconnect = () => {
-
-    setSelectedRepoId(null);
-    setSelectedThreat(null);
-    setThreatsList([]);
-    setScanLogs([]);
-    setRepositories([]);
-    setOwnerTabs([]);
-    setActiveOwnerTab("");
-    setSelectedRepoIds(new Set());
-    addLog("Authenticated session closed.", "info");
-  };
 
   // Toggle single repo selection
   const toggleRepoSelect = (repoId: number) => {
@@ -376,7 +356,7 @@ const Home = () => {
         if (payload && payload.message) {
           addLog(payload.message, payload.type || "info");
         }
-      } catch (e) {
+      } catch {
         // Skip log parses
       }
     };
@@ -546,7 +526,7 @@ const Home = () => {
         if (response.ok) {
           successfullyCleanedIds.add(threat.id);
         }
-      } catch (err) {
+      } catch {
         // Skip on fail
       }
     }

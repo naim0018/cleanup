@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Power, LayoutDashboard, User, Settings, Activity } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";

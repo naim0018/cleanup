@@ -38,7 +38,7 @@ export default function Login() {
         const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
         window.location.href = `${apiBase}/auth/github`;
       }
-    } catch (error) {
+    } catch {
       alert("Failed to authenticate.");
       setIsConnecting(false);
     }
