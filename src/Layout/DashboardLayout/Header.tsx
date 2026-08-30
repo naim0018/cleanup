@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { Github, Search, LogOut } from "lucide-react";
+import { Github, Search, LogOut, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-export default function Header() {
+interface HeaderProps {
+  onMenuClick: () => void;
+}
+
+export default function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<{ login: string; avatar_url: string } | null>(null);
 
@@ -36,8 +40,14 @@ export default function Header() {
   };
 
   return (
-    <header className="h-20 bg-layout-bg/80 backdrop-blur-xl border-b border-border flex items-center justify-between px-8 sticky top-0 z-20 shadow-sm transition-all">
-      <div className="flex items-center gap-4">
+    <header className="h-20 bg-layout-bg/80 backdrop-blur-xl border-b border-border flex items-center justify-between px-6 md:px-8 sticky top-0 z-20 shadow-sm transition-all">
+      <div className="flex items-center gap-3">
+        <button 
+          onClick={onMenuClick}
+          className="p-2 -ml-2 text-secondary-text hover:text-primary-text md:hidden rounded-md focus:outline-none transition-colors cursor-pointer"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
         <h1 className="text-xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-indigo-600">Overview</h1>
       </div>
       

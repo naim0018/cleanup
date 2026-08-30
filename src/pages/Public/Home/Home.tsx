@@ -1,4 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  useGetGithubReposQuery,
+  useGetGithubOrgsQuery,
+  useGetGithubHistoryQuery,
+  useGetGithubRateLimitQuery,
+  useCleanRepositoryFileMutation,
+} from "@/store/Api/Github/github.api";
+import { getErrorMessage } from "@/store/Api/Github/github.type";
 
 import {
   Github,
@@ -6,6 +14,7 @@ import {
   ShieldCheck,
   RefreshCw,
   Database,
+  Building2,
   CheckCircle2,
   AlertTriangle,
   Play,
@@ -62,23 +71,85 @@ interface DetectedThreat {
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
 const Home = () => {
-  // Authentication states
+  // RTK Query hooks
+  const { data: orgsData, error: orgsError } = useGetGithubOrgsQuery();
+  const githubLogin = orgsData?.user?.login || "";
+  const { data: historyData } = useGetGithubHistoryQuery(githubLogin, { skip: !githubLogin });
+  const { data: reposData, error: reposError } = useGetGithubReposQuery();
+  const { data: rateLimitData, refetch: refetchRateLimit } = useGetGithubRateLimitQuery(undefined, {
+    pollingInterval: 30000,
+  });
+  const [cleanFileMutation] = useCleanRepositoryFileMutation();
 
-
-  // Owner tabs
-  const [ownerTabs, setOwnerTabs] = useState<OwnerTab[]>([]);
   const [activeOwnerTab, setActiveOwnerTab] = useState<string>("");
+  const [localRepoStatus, setLocalRepoStatus] = useState<Record<number, { status: Repository["status"]; threatsFound: number; lastScan?: string }>>({});
+  const [pendingTransitionIds, setPendingTransitionIds] = useState<Set<number>>(new Set());
+  const [transitionCountdown, setTransitionCountdown] = useState<Record<number, number>>({});
+
+  // Initialize activeOwnerTab once orgsData is loaded
+  useEffect(() => {
+    if (orgsData?.user?.login && !activeOwnerTab) {
+      setActiveOwnerTab(orgsData.user.login);
+    }
+  }, [orgsData, activeOwnerTab]);
+
+  const ownerTabs = useMemo(() => {
+    if (!orgsData) return [];
+    const tabsMap = new Map<string, { login: string; type: "User" | "Organization" }>();
+    
+    // Add primary user tab
+    tabsMap.set(orgsData.user.login, { login: orgsData.user.login, type: "User" });
+    
+    // Add orgs returned from API
+    orgsData.orgs.forEach(o => {
+      tabsMap.set(o.login, { login: o.login, type: "Organization" });
+    });
+    
+    // Dynamically extract any other owners from repositories
+    if (reposData) {
+      reposData.forEach((r) => {
+        if (r.owner && !tabsMap.has(r.owner)) {
+          tabsMap.set(r.owner, { login: r.owner, type: r.ownerType || "Organization" });
+        }
+      });
+    }
+    
+    return Array.from(tabsMap.values()) as Array<{ login: string; type: "User" | "Organization" }>;
+  }, [orgsData, reposData]);
 
   // Multi-select
   const [selectedRepoIds, setSelectedRepoIds] = useState<Set<number>>(new Set());
   const [isBulkScanning, setIsBulkScanning] = useState(false);
 
   // Dashboard & Scanning States
-  const [repositories, setRepositories] = useState<Repository[]>([]);
   const [safeRepoIds, setSafeRepoIds] = useState<Set<number>>(() => {
     const saved = localStorage.getItem("safe_repos");
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
+
+  const repositories = useMemo(() => {
+    if (!reposData) return [];
+    const historyMap = new Map((historyData || []).map((h: any) => [h.repoId, h]));
+    return reposData.map((r) => {
+      const h = historyMap.get(r.id);
+      let repo = h
+        ? {
+            ...r,
+            status: h.status as Repository["status"],
+            threatsFound: h.threatsFound - h.threatsCleaned,
+            filesCount: h.filesScanned,
+            lastScan: new Date(h.lastScanDate).toLocaleDateString(),
+          }
+        : r;
+      if (localRepoStatus[r.id]) {
+        repo = {
+          ...repo,
+          ...localRepoStatus[r.id],
+        };
+      }
+      return repo;
+    });
+  }, [reposData, historyData, localRepoStatus]);
 
   const toggleSafeRepo = (id: number) => {
     setSafeRepoIds(prev => {
@@ -107,34 +178,82 @@ const Home = () => {
   const [scanProgress, setScanProgress] = useState(0);
   const [activeTab, setActiveTab] = useState<"scan" | "threats" | "logs">("scan");
 
+  const recentlyAuditedFiles = useMemo(() => {
+    const audited: string[] = [];
+    for (let i = scanLogs.length - 1; i >= 0; i--) {
+      const msg = scanLogs[i].message;
+      if (msg.includes("Auditing code buffer:")) {
+        const file = msg.replace("Auditing code buffer:", "").trim();
+        if (!audited.includes(file)) {
+          audited.push(file);
+          if (audited.length === 3) break;
+        }
+      }
+    }
+    return audited;
+  }, [scanLogs]);
+
   // Threats states
   const [threatsList, setThreatsList] = useState<DetectedThreat[]>([]);
   const [selectedThreat, setSelectedThreat] = useState<DetectedThreat | null>(null);
   const [isCleaning, setIsCleaning] = useState(false);
 
-  // Stats
-  const [totalFilesScanned, setTotalFilesScanned] = useState(0);
-  const [threatsCleanedCount, setThreatsCleanedCount] = useState(0);
-  const [rateLimit, setRateLimit] = useState<{ limit: number; used: number; remaining: number; resetAt: string } | null>(null);
-
-  // Fetch rate limit
-  const fetchRateLimit = async (token: string) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/github/rate-limit`, {
-        headers: { Authorization: `Bearer ${token}` },
+  useEffect(() => {
+    if (historyData) {
+      const allHistoryThreats: DetectedThreat[] = [];
+      historyData.forEach((h: any) => {
+        if (h.threats && Array.isArray(h.threats)) {
+          h.threats.forEach((threat: any) => {
+            allHistoryThreats.push({
+              ...threat,
+              repoId: h.repoId,
+            });
+          });
+        }
       });
-      if (res.ok) setRateLimit(await res.json());
-    } catch {
-      // ignore
+      setThreatsList(allHistoryThreats);
     }
-  };
+  }, [historyData]);
 
-  // Repos filtered by active owner tab
+  // Stats
+  const totalFilesScanned = useMemo(() => {
+    return (historyData || []).reduce((sum, h) => sum + (h.filesScanned || 0), 0);
+  }, [historyData]);
+
+  const threatsCleanedCount = useMemo(() => {
+    return (historyData || []).reduce((sum, h) => sum + (h.threatsCleaned || 0), 0);
+  }, [historyData]);
+
+  const rateLimit = rateLimitData || null;
+  const [resetCountdown, setResetCountdown] = useState<string>("");
+
+  useEffect(() => {
+    if (!rateLimit) return;
+    const updateTimer = () => {
+      const msLeft = new Date(rateLimit.resetAt).getTime() - Date.now();
+      if (msLeft <= 0) {
+        setResetCountdown("Resetting...");
+        return;
+      }
+      const mins = Math.floor(msLeft / 60000);
+      const secs = Math.floor((msLeft % 60000) / 1000);
+      setResetCountdown(`Resets in ${mins}m ${secs}s`);
+    };
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [rateLimit]);
+
+  // Repos filtered by active owner tab and excluding scanned/cleaned ones
+  const unscannedRepos = repositories.filter(
+    (r) => r.status === "idle" || r.status === "scanning" || pendingTransitionIds.has(r.id)
+  );
+
   const visibleRepos = activeOwnerTab === "SAFE_REPOS"
-    ? repositories.filter((r) => safeRepoIds.has(r.id))
+    ? unscannedRepos.filter((r) => safeRepoIds.has(r.id))
     : activeOwnerTab
-      ? repositories.filter((r) => r.owner === activeOwnerTab)
-      : repositories;
+      ? unscannedRepos.filter((r) => r.owner === activeOwnerTab)
+      : unscannedRepos;
 
   // Initialize Logs
   const addLog = (message: string, level: ScanLog["level"] = "info") => {
@@ -142,86 +261,10 @@ const Home = () => {
     setScanLogs((prev) => [{ time: timestamp, level, message }, ...prev]);
   };
 
-  
   useEffect(() => {
-    fetchRepositories();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const fetchRepositories = async () => {
-
     addLog(`Initiating connection via GitHub...`, "info");
-
-    try {
-      const authHeaders = { "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}` };
-
-      // Fetch repos and orgs in parallel
-      const [reposRes, orgsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/github/repos`, { headers: authHeaders }),
-        fetch(`${API_BASE_URL}/github/orgs`, { headers: authHeaders }),
-      ]);
-
-      if (!reposRes.ok) throw new Error(await reposRes.text());
-
-      const repos: Repository[] = await reposRes.json();
-
-      // Merge saved scan history from MongoDB
-      const token = localStorage.getItem("github_pat") || "";
-      try {
-        if (orgsRes.ok) {
-          const orgData = await orgsRes.json();
-          const tabs: OwnerTab[] = [
-            { login: orgData.user.login, type: "User" },
-            ...orgData.orgs,
-          ];
-          setOwnerTabs(tabs);
-          setActiveOwnerTab(orgData.user.login);
-
-          // Fetch and merge scan history from MongoDB
-          try {
-            const historyRes = await fetch(`${API_BASE_URL}/github/history?githubLogin=${orgData.user.login}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (historyRes.ok) {
-              const history: any[] = await historyRes.json();
-              const historyMap = new Map(history.map((h: any) => [h.repoId, h]));
-              const mergedRepos = repos.map((r) => {
-                const h = historyMap.get(r.id);
-                if (!h) return r;
-                return {
-                  ...r,
-                  status: h.status as Repository["status"],
-                  threatsFound: h.threatsFound - h.threatsCleaned,
-                  filesCount: h.filesScanned,
-                  lastScan: new Date(h.lastScanDate).toLocaleDateString(),
-                };
-              });
-              setRepositories(mergedRepos);
-              // Restore cleaned counts
-              const totalCleaned = history.reduce((sum: number, h: any) => sum + (h.threatsCleaned || 0), 0);
-              setThreatsCleanedCount(totalCleaned);
-            } else {
-              setRepositories(repos);
-            }
-          } catch {
-            setRepositories(repos);
-          }
-        } else {
-          setRepositories(repos);
-        }
-      } catch {
-        setRepositories(repos);
-      }
-
-      // Fetch rate limit
-      await fetchRateLimit(token);
-
-
-      addLog("Successfully authenticated! Fetched live repository list.", "success");
-    } catch (err: any) {
-      addLog(`Authentication failed: ${err.message || err}`, "error");
-    }
-  };
+    addLog("Successfully authenticated! Fetched live repository list.", "success");
+  }, []);
 
 
   // Toggle single repo selection
@@ -283,26 +326,18 @@ const Home = () => {
       const repo = repositories.find((r) => r.id === threat.repoId);
       if (!repo) continue;
       try {
-        const response = await fetch(`${API_BASE_URL}/github/clean`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
-          },
-          body: JSON.stringify({
-            fullName: repo.fullName,
-            filePath: threat.filePath,
-            sha: (threat as any).sha,
-            cleanedCode: threat.cleanedCode,
-            deleteFilePath: (threat as any).deleteFilePath,
-            githubLogin: activeOwnerTab,
-            repoId: repo.id
-          }),
-        });
-        if (response.ok) {
-          successfullyCleanedIds.add(threat.id);
-          addLog(`Patched: ${threat.filePath}`, "success");
-        }
+        await cleanFileMutation({
+          fullName: repo.fullName,
+          filePath: threat.filePath,
+          sha: (threat as any).sha,
+          cleanedCode: threat.cleanedCode,
+          deleteFilePath: (threat as any).deleteFilePath,
+          githubLogin: activeOwnerTab,
+          repoId: repo.id
+        }).unwrap();
+
+        successfullyCleanedIds.add(threat.id);
+        addLog(`Patched: ${threat.filePath}`, "success");
       } catch {
         addLog(`Failed to patch: ${threat.filePath}`, "error");
       }
@@ -313,18 +348,22 @@ const Home = () => {
       prev.map((t) => (successfullyCleanedIds.has(t.id) ? { ...t, isCleaned: true } : t))
     );
 
-    setThreatsCleanedCount((prev) => prev + successfullyCleanedIds.size);
+    // Apply local status overrides for each repo that was modified
+    const affectedRepoIds = Array.from(new Set(dirtyThreats.map((t) => t.repoId)));
+    const updatedThreats = threatsList.map((t) => (successfullyCleanedIds.has(t.id) ? { ...t, isCleaned: true } : t));
 
-    setRepositories((prev) =>
-      prev.map((r) => {
-        // Evaluate remaining threats using the newly computed sets
-        const remaining = threatsList.filter(
-          (t) => t.repoId === r.id && !t.isCleaned && !successfullyCleanedIds.has(t.id)
-        ).length;
-
-        return remaining === 0 && r.status === "scanned" ? { ...r, status: "cleaned", threatsFound: 0 } : r;
-      })
-    );
+    setLocalRepoStatus((prev) => {
+      const next = { ...prev };
+      affectedRepoIds.forEach((repoId) => {
+        const repoThreatsForThisRepo = updatedThreats.filter((t) => t.repoId === repoId);
+        const remainingThreats = repoThreatsForThisRepo.filter((t) => !t.isCleaned).length;
+        next[repoId] = {
+          status: remainingThreats === 0 ? "cleaned" : "scanned",
+          threatsFound: remainingThreats,
+        };
+      });
+      return next;
+    });
 
     setIsCleaning(false);
     addLog("Bulk patch complete!", "success");
@@ -342,28 +381,34 @@ const Home = () => {
     setSelectedThreat(null);
 
     // Update repository state
-    setRepositories((prev) =>
-      prev.map((r) => (r.id === repoId ? { ...r, status: "scanning", threatsFound: 0 } : r))
-    );
+    setLocalRepoStatus((prev) => ({
+      ...prev,
+      [repoId]: { status: "scanning", threatsFound: 0 }
+    }));
 
     addLog(`Starting live security scan on: ${repo.fullName}`, "info");
-    addLog(`Connecting EventSource log listener...`, "info");
+    addLog(`Connecting scan logs polling listener...`, "info");
 
-    // Connect to Server Sent Events for live logs
-    const eventSource = new EventSource(`${API_BASE_URL}/github/scan-events?fullName=${repo.fullName}`);
-    eventSource.onmessage = (event) => {
+    const pollLogs = async () => {
       try {
-        const payload = JSON.parse(event.data);
-        if (payload && payload.message) {
-          addLog(payload.message, payload.type || "info");
+        const res = await fetch(`${API_BASE_URL}/github/logs?fullName=${repo.fullName}`, {
+          headers: {
+            "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
+          }
+        });
+        if (res.ok) {
+          const logs = await res.json();
+          setScanLogs(logs);
         }
-      } catch {
-        // Skip log parses
+      } catch (err) {
+        // ignore
       }
     };
+    pollLogs();
+    const logInterval = setInterval(pollLogs, 500);
 
     // Also refresh rate limit after scan
-    fetchRateLimit(localStorage.getItem("github_pat") || "");
+    refetchRateLimit();
 
     // progress bar animation
     const progressInterval = setInterval(() => {
@@ -378,8 +423,9 @@ const Home = () => {
       });
 
       clearInterval(progressInterval);
+      clearInterval(logInterval);
       setScanProgress(100);
-      eventSource.close(); // Close stream once complete
+      pollLogs();
 
       if (!response.ok) {
         throw new Error(await response.text());
@@ -398,20 +444,14 @@ const Home = () => {
         return [...filtered, ...mappedThreats];
       });
 
-      setRepositories((prev) =>
-        prev.map((r) =>
-          r.id === repo.id
-            ? {
-              ...r,
-              status: "scanned",
-              threatsFound: mappedThreats.length,
-              lastScan: new Date().toLocaleDateString(),
-            }
-            : r
-        )
-      );
-
-      setTotalFilesScanned((prev) => prev + result.filesScanned);
+      setLocalRepoStatus((prev) => ({
+        ...prev,
+        [repo.id]: {
+          status: "scanned",
+          threatsFound: mappedThreats.length,
+          lastScan: new Date().toLocaleDateString(),
+        }
+      }));
 
       if (mappedThreats.length > 0) {
         addLog(`Scan finished. Found ${mappedThreats.length} potential security threat(s).`, "warning");
@@ -419,13 +459,37 @@ const Home = () => {
         setSelectedThreat(mappedThreats[0]);
       } else {
         addLog("Scan finished. Clean codebase! No malware matches detected.", "success");
+        setPendingTransitionIds((prev) => {
+          const next = new Set(prev);
+          next.add(repo.id);
+          return next;
+        });
+        setTransitionCountdown((prev) => ({ ...prev, [repo.id]: 5 }));
+        const interval = setInterval(() => {
+          setTransitionCountdown((prev) => {
+            const current = prev[repo.id];
+            if (current === undefined || current <= 1) {
+              clearInterval(interval);
+              setPendingTransitionIds((pt) => {
+                const next = new Set(pt);
+                next.delete(repo.id);
+                return next;
+              });
+              const nextCount = { ...prev };
+              delete nextCount[repo.id];
+              return nextCount;
+            }
+            return { ...prev, [repo.id]: current - 1 };
+          });
+        }, 1000);
       }
     } catch (err: any) {
-      eventSource.close();
-      addLog(`Scan failed: ${err.message || err}`, "error");
-      setRepositories((prev) =>
-        prev.map((r) => (r.id === repo.id ? { ...r, status: "idle" } : r))
-      );
+      clearInterval(logInterval);
+      addLog(`Scan failed: ${getErrorMessage(err)}`, "error");
+      setLocalRepoStatus((prev) => ({
+        ...prev,
+        [repo.id]: { status: "idle", threatsFound: 0 }
+      }));
     } finally {
       setIsScanning(false);
     }
@@ -437,32 +501,21 @@ const Home = () => {
     const threat = threatsList.find((t) => t.id === threatId);
     if (!threat) return;
 
-    addLog(`Initiating patch via NestJS REST API for: ${threat.filePath}`, "info");
+    addLog(`Initiating patch via RTK Query mutation for: ${threat.filePath}`, "info");
 
     try {
       const repo = repositories.find((r) => r.id === threat.repoId);
-      const response = await fetch(`${API_BASE_URL}/github/clean`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
-        },
-        body: JSON.stringify({
-          fullName: repo?.fullName,
-          filePath: threat.filePath,
-          sha: (threat as any).sha,
-          cleanedCode: threat.cleanedCode,
-          deleteFilePath: (threat as any).deleteFilePath,
-          githubLogin: activeOwnerTab,
-          repoId: repo?.id
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const result = await response.json();
+      const result = await cleanFileMutation({
+        fullName: repo?.fullName || "",
+        filePath: threat.filePath,
+        sha: (threat as any).sha,
+        cleanedCode: threat.cleanedCode,
+        deleteFilePath: (threat as any).deleteFilePath,
+        githubLogin: activeOwnerTab,
+        repoId: repo?.id,
+        malwareType: threat.malwareType,
+        severity: threat.severity
+      }).unwrap();
 
       setThreatsList((prev) =>
         prev.map((t) => (t.id === threatId ? { ...t, isCleaned: true } : t))
@@ -473,24 +526,19 @@ const Home = () => {
       const repoThreats = updatedThreats.filter((t) => t.repoId === threat.repoId);
       const remainingThreats = repoThreats.filter((t) => !t.isCleaned).length;
 
-      setRepositories((prev) =>
-        prev.map((r) =>
-          r.id === threat.repoId
-            ? {
-              ...r,
-              status: remainingThreats === 0 ? "cleaned" : "scanned",
-              threatsFound: remainingThreats,
-            }
-            : r
-        )
-      );
+      setLocalRepoStatus((prev) => ({
+        ...prev,
+        [threat.repoId]: {
+          status: remainingThreats === 0 ? "cleaned" : "scanned",
+          threatsFound: remainingThreats,
+        }
+      }));
 
       // Update selected threat view
       setSelectedThreat((prev) => (prev && prev.id === threatId ? { ...prev, isCleaned: true } : prev));
-      setThreatsCleanedCount((prev) => prev + 1);
       addLog(`Success! Patched ${threat.filePath}. Reference commit: ${result.commitSha.substring(0, 8)}`, "success");
     } catch (err: any) {
-      addLog(`Failed to patch threat: ${err.message || err}`, "error");
+      addLog(`Failed to patch threat: ${getErrorMessage(err)}`, "error");
     } finally {
       setIsCleaning(false);
     }
@@ -507,26 +555,19 @@ const Home = () => {
     for (const threat of repoThreats) {
       try {
         addLog(`Patching file: ${threat.filePath}...`, "info");
-        const response = await fetch(`${API_BASE_URL}/github/clean`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
-          },
-          body: JSON.stringify({
-            fullName: repo?.fullName,
-            filePath: threat.filePath,
-            sha: (threat as any).sha,
-            cleanedCode: threat.cleanedCode,
-            deleteFilePath: (threat as any).deleteFilePath,
-            githubLogin: activeOwnerTab,
-            repoId: repo?.id
-          }),
-        });
+        await cleanFileMutation({
+          fullName: repo?.fullName || "",
+          filePath: threat.filePath,
+          sha: (threat as any).sha,
+          cleanedCode: threat.cleanedCode,
+          deleteFilePath: (threat as any).deleteFilePath,
+          githubLogin: activeOwnerTab,
+          repoId: repo?.id,
+          malwareType: threat.malwareType,
+          severity: threat.severity
+        }).unwrap();
 
-        if (response.ok) {
-          successfullyCleanedIds.add(threat.id);
-        }
+        successfullyCleanedIds.add(threat.id);
       } catch {
         // Skip on fail
       }
@@ -536,20 +577,17 @@ const Home = () => {
       prev.map((t) => (successfullyCleanedIds.has(t.id) ? { ...t, isCleaned: true } : t))
     );
 
-    setRepositories((prev) =>
-      prev.map((r) => {
-        if (r.id !== repoId) return r;
-        const remaining = threatsList.filter(
-          (t) => t.repoId === r.id && !t.isCleaned && !successfullyCleanedIds.has(t.id)
-        ).length;
+    const remaining = threatsList.filter(
+      (t) => t.repoId === repoId && !t.isCleaned && !successfullyCleanedIds.has(t.id)
+    ).length;
 
-        return remaining === 0 && r.status === "scanned"
-          ? { ...r, status: "cleaned", threatsFound: 0 }
-          : { ...r, threatsFound: remaining };
-      })
-    );
-
-    setThreatsCleanedCount((prev) => prev + successfullyCleanedIds.size);
+    setLocalRepoStatus((prev) => ({
+      ...prev,
+      [repoId]: {
+        status: remaining === 0 ? "cleaned" : "scanned",
+        threatsFound: remaining,
+      }
+    }));
 
     if (selectedThreat && selectedThreat.repoId === repoId && successfullyCleanedIds.has(selectedThreat.id)) {
       setSelectedThreat((prev) => prev ? { ...prev, isCleaned: true } : prev);
@@ -566,85 +604,126 @@ const Home = () => {
 
 
         {/* Global Statistics */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div className="surface border border-border p-5 rounded-md flex items-center justify-between shadow-sm">
-            <div>
-              <p className="text-xs text-secondary-text font-bold uppercase tracking-wider">Connected Repositories</p>
-              <h3 className="text-2xl font-bold mt-1 text-primary-text">
-                {repositories.length}
-              </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-stretch">
+
+          {/* My Repositories */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-blue-500 to-indigo-500 rounded-b-xl" />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">My Repositories</p>
+              <div className="p-2 bg-blue-500/10 dark:bg-blue-500/15 text-blue-500 rounded-lg">
+                <Database className="w-4 h-4" />
+              </div>
             </div>
-            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-md">
-              <Database className="w-5 h-5" />
+            <div>
+              <h3 className="text-3xl font-extrabold text-primary-text leading-none">
+                {repositories.filter(r => r.owner === githubLogin).length}
+              </h3>
+              <p className="text-[11px] text-secondary-text mt-1.5">personal repositories</p>
             </div>
           </div>
 
-          <div className="surface border border-border p-5 rounded-md flex items-center justify-between shadow-sm">
+          {/* Org Repositories */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-violet-500 to-purple-500 rounded-b-xl" />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">Org Repositories</p>
+              <div className="p-2 bg-violet-500/10 dark:bg-violet-500/15 text-violet-500 rounded-lg">
+                <Building2 className="w-4 h-4" />
+              </div>
+            </div>
             <div>
-              <p className="text-xs text-secondary-text font-bold uppercase tracking-wider">Total Scanned Files</p>
-              <h3 className="text-2xl font-bold mt-1 text-primary-text">
+              <h3 className="text-3xl font-extrabold text-primary-text leading-none">
+                {repositories.filter(r => r.owner !== githubLogin).length}
+              </h3>
+              <p className="text-[11px] text-secondary-text mt-1.5">organization repositories</p>
+            </div>
+          </div>
+
+          {/* Total Scanned Files */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-indigo-500 to-sky-500 rounded-b-xl" />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">Total Scanned Files</p>
+              <div className="p-2 bg-indigo-500/10 dark:bg-indigo-500/15 text-indigo-500 rounded-lg">
+                <FileCode className="w-4 h-4" />
+              </div>
+            </div>
+            <div>
+              <h3 className="text-3xl font-extrabold text-primary-text leading-none">
                 {totalFilesScanned}
               </h3>
-            </div>
-            <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-md">
-              <FileCode className="w-5 h-5" />
+              <p className="text-[11px] text-secondary-text mt-1.5">files evaluated</p>
             </div>
           </div>
 
-          <div className="surface border border-border p-5 rounded-md flex items-center justify-between shadow-sm">
+          {/* Pending Threats */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-rose-500 to-red-500 rounded-b-xl" />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">Pending Threats</p>
+              <div className="p-2 bg-rose-500/10 dark:bg-rose-500/15 text-rose-500 rounded-lg">
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+            </div>
             <div>
-              <p className="text-xs text-secondary-text font-bold uppercase tracking-wider">Pending Threats</p>
-              <h3 className="text-2xl font-bold mt-1 text-rose-500">
+              <h3 className={`text-3xl font-extrabold leading-none ${threatsList.filter(t => !t.isCleaned).length > 0 ? 'text-rose-500' : 'text-primary-text'}`}>
                 {threatsList.filter(t => !t.isCleaned).length}
               </h3>
-            </div>
-            <div className="p-3 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 rounded-md">
-              <ShieldAlert className="w-5 h-5" />
+              <p className="text-[11px] text-secondary-text mt-1.5">active indicators</p>
             </div>
           </div>
 
-          <div className="surface border border-border p-5 rounded-md flex items-center justify-between shadow-sm">
+          {/* Patched & Cleaned */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-gradient-to-r from-emerald-500 to-teal-500 rounded-b-xl" />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">Patched & Cleaned</p>
+              <div className="p-2 bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-500 rounded-lg">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+            </div>
             <div>
-              <p className="text-xs text-secondary-text font-bold uppercase tracking-wider">Patched &amp; Cleaned</p>
-              <h3 className="text-2xl font-bold mt-1 text-emerald-500">
+              <h3 className={`text-3xl font-extrabold leading-none ${threatsCleanedCount > 0 ? 'text-emerald-500' : 'text-primary-text'}`}>
                 {threatsCleanedCount}
               </h3>
-            </div>
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-md">
-              <ShieldCheck className="w-5 h-5" />
+              <p className="text-[11px] text-secondary-text mt-1.5">threats remediated</p>
             </div>
           </div>
 
-          {/* Rate Limit Card */}
-          <div className="surface border border-border p-5 rounded-md shadow-sm space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-secondary-text font-bold uppercase tracking-wider">API Rate Limit</p>
-              <div className="p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 rounded-md">
+          {/* API Rate Limit */}
+          <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
+            <div className={`absolute inset-x-0 bottom-0 h-[3px] rounded-b-xl ${rateLimit ? (rateLimit.remaining < 100 ? 'bg-gradient-to-r from-rose-500 to-red-500' : rateLimit.remaining < 500 ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'bg-gradient-to-r from-emerald-500 to-teal-500') : 'bg-gradient-to-r from-amber-500 to-orange-500'}`} />
+            <div className="flex items-start justify-between">
+              <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">API Rate Limit</p>
+              <div className={`p-2 rounded-lg ${rateLimit ? (rateLimit.remaining < 100 ? 'bg-rose-500/10 text-rose-500' : rateLimit.remaining < 500 ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-500') : 'bg-amber-500/10 text-amber-500'}`}>
                 <RefreshCw className="w-4 h-4" />
               </div>
             </div>
             {rateLimit ? (
-              <>
-                <div className="flex items-end gap-1">
-                  <span className={`text-xl font-bold ${rateLimit.remaining < 100 ? 'text-rose-500' : rateLimit.remaining < 500 ? 'text-amber-500' : 'text-emerald-500'}`}>
+              <div className="space-y-2">
+                <div className="flex items-baseline gap-1 leading-none">
+                  <span className={`text-3xl font-extrabold ${rateLimit.remaining < 100 ? 'text-rose-500' : rateLimit.remaining < 500 ? 'text-amber-500' : 'text-emerald-500'}`}>
                     {rateLimit.remaining.toLocaleString()}
                   </span>
-                  <span className="text-xs text-secondary-text mb-0.5">/ {rateLimit.limit.toLocaleString()} remaining</span>
+                  <span className="text-[11px] text-secondary-text">/ {rateLimit.limit.toLocaleString()}</span>
                 </div>
-                <div className="w-full bg-border rounded-full h-1.5 overflow-hidden">
+                <div className="w-full bg-border rounded-full h-1 overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${rateLimit.remaining < 100 ? 'bg-rose-500' : rateLimit.remaining < 500 ? 'bg-amber-500' : 'bg-emerald-500'}`}
                     style={{ width: `${(rateLimit.remaining / rateLimit.limit) * 100}%` }}
                   />
                 </div>
-                <p className="text-[10px] text-secondary-text">
-                  Resets {new Date(rateLimit.resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </>
+                <p className="text-[11px] text-secondary-text">{resetCountdown}</p>
+              </div>
             ) : (
-              <p className="text-xs text-secondary-text">Connect to view</p>
+              <div>
+                <h3 className="text-3xl font-extrabold text-primary-text leading-none">—</h3>
+                <p className="text-[11px] text-secondary-text mt-1.5">connect to view</p>
+              </div>
             )}
           </div>
+
         </div>
 
         {/* Main Security Dashboard workspace */}
@@ -755,6 +834,15 @@ const Home = () => {
 
             {/* Repo List */}
             <div className="divide-y divide-border flex-1 overflow-y-auto">
+              {(reposError || orgsError) && (
+                <div className="mx-4 my-3 p-3.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 rounded-lg flex items-start gap-2.5 shadow-sm text-status-danger text-xs font-medium">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">GitHub Connection Error</p>
+                    <p className="opacity-90">{getErrorMessage(reposError || orgsError)}</p>
+                  </div>
+                </div>
+              )}
               {visibleRepos.length === 0 && (
                 <div className="px-5 py-10 text-center text-xs text-secondary-text">No repositories found for this owner.</div>
               )}
@@ -897,24 +985,51 @@ const Home = () => {
               <div className="surface border border-border rounded-md p-6 shadow-sm space-y-6">
 
                 {isScanning ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
+                  <div className="py-10 flex flex-col items-center justify-center text-center space-y-4">
                     <div className="p-4 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-full animate-pulse border border-blue-500/10">
                       <RefreshCw className="w-8 h-8 animate-spin" />
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-primary-text">Scanning Directory Tree...</h3>
+                      <h3 className="text-base font-bold text-primary-text animate-pulse">Scanning Directory Tree...</h3>
                       <p className="text-xs text-secondary-text mt-1 max-w-sm">
                         Reading repository file contents. Comparing buffer streams against malicious regex signatures.
                       </p>
                     </div>
 
-                    <div className="w-full max-w-md bg-light-background rounded-full h-2 overflow-hidden">
+                    <div className="w-full max-w-md bg-light-background rounded-full h-2 overflow-hidden shadow-inner">
                       <div
                         className="bg-blue-600 h-full transition-all duration-100"
                         style={{ width: `${scanProgress}%` }}
                       />
                     </div>
                     <span className="text-xs font-bold text-blue-600 dark:text-blue-400">{scanProgress}% completed</span>
+
+                    {/* Auditing File Animation Feed */}
+                    {recentlyAuditedFiles.length > 0 && (
+                      <div className="w-full bg-slate-900/95 dark:bg-slate-950/95 border border-slate-700/50 p-4.5 rounded-xl text-left space-y-2.5 font-mono text-[12px] shadow-xl relative overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
+                          <span className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Live Audit Trace</span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                        </div>
+                        <div className="space-y-2">
+                          {recentlyAuditedFiles.map((file, idx) => (
+                            <div
+                              key={file}
+                              className={`flex items-center gap-2.5 overflow-hidden text-ellipsis whitespace-nowrap transition-all duration-300 ${
+                                idx === 0 
+                                  ? "text-blue-400 font-bold opacity-100 scale-100 translate-y-0" 
+                                  : idx === 1 
+                                    ? "text-slate-300 opacity-70 scale-95 translate-y-0.5" 
+                                    : "text-slate-500 opacity-40 scale-90 translate-y-1"
+                              }`}
+                            >
+                              <span className="shrink-0 text-blue-500">🔍</span>
+                              <span className="select-all break-all">{file}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : selectedRepoId ? (
                   (() => {
@@ -1051,6 +1166,25 @@ const Home = () => {
                                 : "Zero malicious code indicators detected inside Javascript/TypeScript sources."
                               }
                             </p>
+                            {repo.status !== "idle" && pendingTransitionIds.has(repo.id) && (
+                              <div className="mt-4 flex flex-col items-center gap-2 bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 px-4 py-3 rounded-lg max-w-xs">
+                                <span className="text-xs text-primary-text font-semibold">
+                                  Archiving to Scanned Repos in {transitionCountdown[repo.id] !== undefined ? transitionCountdown[repo.id] : 5}s...
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    setPendingTransitionIds((pt) => {
+                                      const next = new Set(pt);
+                                      next.delete(repo.id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-md transition-colors cursor-pointer"
+                                >
+                                  Move Now
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
 

@@ -45,4 +45,26 @@ export const PageSkeleton = () => {
 
 
 
+export const LoginSkeleton = () => {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-layout-bg p-4">
+      <div className="w-full max-w-xl surface shadow-all rounded-3xl p-8 space-y-6 animate-pulse">
+        <div className="flex justify-center mb-6">
+          <div className="w-16 h-16 rounded-2xl bg-slate-200 dark:bg-slate-800 animate-pulse"></div>
+        </div>
+        <div className="space-y-3">
+          <div className="h-7 bg-slate-200 dark:bg-slate-800 rounded-lg w-2/3 mx-auto"></div>
+          <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-lg w-5/6 mx-auto"></div>
+          <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-lg w-4/5 mx-auto"></div>
+        </div>
+        <div className="grid grid-cols-2 gap-4 pt-4">
+          <div className="h-28 bg-slate-200 dark:bg-slate-800 rounded-2xl"></div>
+          <div className="h-28 bg-slate-200 dark:bg-slate-800 rounded-2xl"></div>
+        </div>
+        <div className="h-12 bg-slate-200 dark:bg-slate-800 rounded-xl w-full pt-4"></div>
+      </div>
+    </div>
+  );
+};
+
 export default Skeleton;

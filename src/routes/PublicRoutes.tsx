@@ -7,11 +7,21 @@ const Home = Loadable(
   PublicSkeleton
 );
 
+const Scanned = Loadable(
+  lazy(() => import("@/pages/Public/Scanned/Scanned")),
+  PublicSkeleton
+);
+
 export const publicRoutes = [
   {
     label: "Home",
     index: true,
     path: "/",
     element: <Home />,
+  },
+  {
+    label: "Scanned",
+    path: "/scanned",
+    element: <Scanned />,
   }
 ];

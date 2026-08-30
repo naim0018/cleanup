@@ -12,7 +12,7 @@ const baseQuery = fetchBaseQuery({
   prepareHeaders: (headers, { getState }) => {
     const state = getState() as any;
     const token = state.auth.user?.accessToken;
-    if (token) {
+    if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `${token}`);
     }
     return headers;
@@ -58,6 +58,6 @@ const baseApi = createApi({
   reducerPath: "baseApi",
   baseQuery: baseQueryWithReauth,
   endpoints: () => ({}),
-  tagTypes: ["Courses", "User", "Support", "Badges"],
+  tagTypes: ["Courses", "User", "Support", "Badges", "Github"],
 });
 export default baseApi;

@@ -6,6 +6,8 @@ import { publicRoutes } from "./PublicRoutes";
 import ProtectedRoutes from "./ProtectedRoutes";
 import DashboardLayout from "@/Layout/DashboardLayout/DashboardLayout";
 
+import { LoginSkeleton } from "@/common/Skeleton";
+
 // CORE COMPONENTS (Always included)
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/Auth/Login"));
@@ -14,7 +16,7 @@ const routes = createBrowserRouter([
   {
     path: "/login",
     element: (
-      <Suspense fallback={<div>Loading...</div>}>
+      <Suspense fallback={<LoginSkeleton />}>
         <Login />
       </Suspense>
     ),
