@@ -122,6 +122,7 @@ const Home = () => {
     try {
       const res = await fetch(`${API_BASE_URL}/github/rate-limit`, {
         headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) setRateLimit(await res.json());
     } catch {
       // ignore
