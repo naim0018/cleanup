@@ -211,6 +211,10 @@ export default function Scanned() {
         if (res.ok) {
           const logs = await res.json();
           setScanLogs(logs);
+          const latestProgressLog = [...logs].reverse().find((log: any) => log.progress !== undefined);
+          if (latestProgressLog) {
+            setScanProgress(latestProgressLog.progress);
+          }
         }
       } catch (err) {
         // ignore
@@ -221,9 +225,7 @@ export default function Scanned() {
 
     refetchRateLimit();
 
-    const progressInterval = setInterval(() => {
-      setScanProgress((prev) => Math.min(prev + 12, 90));
-    }, 250);
+
 
     try {
       const response = await fetch(`${API_BASE_URL}/github/scan?fullName=${repo.fullName}&repoId=${repo.id}&githubLogin=${userLogin}`, {
@@ -232,7 +234,7 @@ export default function Scanned() {
         }
       });
 
-      clearInterval(progressInterval);
+
       clearInterval(logInterval);
       setScanProgress(100);
       pollLogs();
@@ -430,7 +432,7 @@ export default function Scanned() {
               <h3 className={`text-3xl font-extrabold leading-none ${threatsCleanedCount > 0 ? 'text-emerald-500' : 'text-primary-text'}`}>
                 {threatsCleanedCount}
               </h3>
-              <p className="text-[11px] text-secondary-text mt-1.5">threats remediated</p>
+              <p className="text-[11px] text-secondary-text mt-1.5">threats removed</p>
             </div>
           </div>
 
@@ -758,7 +760,7 @@ export default function Scanned() {
                                 disabled={isCleaning}
                                 className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow"
                               >
-                                {isCleaning ? "Patching..." : "Remediate"}
+                                {isCleaning ? "Cleaning..." : "Clean File"}
                               </button>
                             )}
                           </div>

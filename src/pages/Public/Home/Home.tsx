@@ -74,17 +74,16 @@ const Home = () => {
   // RTK Query hooks
   const { data: orgsData, error: orgsError } = useGetGithubOrgsQuery();
   const githubLogin = orgsData?.user?.login || "";
-  const { data: historyData } = useGetGithubHistoryQuery(githubLogin, { skip: !githubLogin });
+  const { data: historyData, refetch: refetchHistory } = useGetGithubHistoryQuery(githubLogin, { skip: !githubLogin });
   const { data: reposData, error: reposError } = useGetGithubReposQuery();
-  const { data: rateLimitData, refetch: refetchRateLimit } = useGetGithubRateLimitQuery(undefined, {
+  const { data: rateLimitData, refetch: refetchRateLimit, isFetching: isFetchingRateLimit } = useGetGithubRateLimitQuery(undefined, {
     pollingInterval: 30000,
   });
   const [cleanFileMutation] = useCleanRepositoryFileMutation();
 
   const [activeOwnerTab, setActiveOwnerTab] = useState<string>("");
   const [localRepoStatus, setLocalRepoStatus] = useState<Record<number, { status: Repository["status"]; threatsFound: number; lastScan?: string }>>({});
-  const [pendingTransitionIds, setPendingTransitionIds] = useState<Set<number>>(new Set());
-  const [transitionCountdown, setTransitionCountdown] = useState<Record<number, number>>({});
+
 
   // Initialize activeOwnerTab once orgsData is loaded
   useEffect(() => {
@@ -121,11 +120,7 @@ const Home = () => {
   const [selectedRepoIds, setSelectedRepoIds] = useState<Set<number>>(new Set());
   const [isBulkScanning, setIsBulkScanning] = useState(false);
 
-  // Dashboard & Scanning States
-  const [safeRepoIds, setSafeRepoIds] = useState<Set<number>>(() => {
-    const saved = localStorage.getItem("safe_repos");
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
+
 
   const repositories = useMemo(() => {
     if (!reposData) return [];
@@ -148,28 +143,35 @@ const Home = () => {
         };
       }
       return repo;
+    }).filter(r => {
+      const h = historyMap.get(r.id);
+      return !h?.archived;
     });
   }, [reposData, historyData, localRepoStatus]);
 
-  const toggleSafeRepo = (id: number) => {
-    setSafeRepoIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      localStorage.setItem("safe_repos", JSON.stringify(Array.from(next)));
-      return next;
-    });
-  };
-
-  const bulkMarkSafe = () => {
-    setSafeRepoIds(prev => {
-      const next = new Set(prev);
-      selectedRepoIds.forEach(id => next.add(id));
-      localStorage.setItem("safe_repos", JSON.stringify(Array.from(next)));
-      return next;
-    });
-    setSelectedRepoIds(new Set());
-    addLog(`Marked ${selectedRepoIds.size} repositories as safe.`, "success");
+  const archiveRepoAPI = async (repoId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/github/archive`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${(localStorage.getItem("github_pat") || "") || "default_token"}`,
+        },
+        body: JSON.stringify({
+          githubLogin: activeOwnerTab,
+          repoId: repoId,
+        }),
+      });
+      if (response.ok) {
+        addLog(`Moved repository to Scanned Repos tab.`, "success");
+        refetchHistory();
+        if (selectedRepoId === repoId) {
+          setSelectedRepoId(null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to archive:", err);
+    }
   };
 
   const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
@@ -212,6 +214,11 @@ const Home = () => {
         }
       });
       setThreatsList(allHistoryThreats);
+      
+      if (!selectedThreat && allHistoryThreats.length > 0) {
+        const uncleaned = allHistoryThreats.find(t => !t.isCleaned);
+        if (uncleaned) setSelectedThreat(uncleaned);
+      }
     }
   }, [historyData]);
 
@@ -246,12 +253,10 @@ const Home = () => {
 
   // Repos filtered by active owner tab and excluding scanned/cleaned ones
   const unscannedRepos = repositories.filter(
-    (r) => r.status === "idle" || r.status === "scanning" || pendingTransitionIds.has(r.id)
+    (r) => r.status === "idle" || r.status === "scanning"
   );
 
-  const visibleRepos = activeOwnerTab === "SAFE_REPOS"
-    ? unscannedRepos.filter((r) => safeRepoIds.has(r.id))
-    : activeOwnerTab
+  const visibleRepos = activeOwnerTab
       ? unscannedRepos.filter((r) => r.owner === activeOwnerTab)
       : unscannedRepos;
 
@@ -302,10 +307,6 @@ const Home = () => {
     setIsBulkScanning(true);
     addLog(`Starting bulk scan for ${selectedRepoIds.size} selected repositories...`, "info");
     for (const repoId of Array.from(selectedRepoIds)) {
-      if (safeRepoIds.has(repoId)) {
-        addLog(`Skipping safe repository ID: ${repoId}`, "info");
-        continue;
-      }
       await startScan(repoId);
     }
     setIsBulkScanning(false);
@@ -399,6 +400,10 @@ const Home = () => {
         if (res.ok) {
           const logs = await res.json();
           setScanLogs(logs);
+          const latestProgressLog = [...logs].reverse().find((log: any) => log.progress !== undefined);
+          if (latestProgressLog) {
+            setScanProgress(latestProgressLog.progress);
+          }
         }
       } catch (err) {
         // ignore
@@ -410,10 +415,7 @@ const Home = () => {
     // Also refresh rate limit after scan
     refetchRateLimit();
 
-    // progress bar animation
-    const progressInterval = setInterval(() => {
-      setScanProgress((prev) => Math.min(prev + 12, 90));
-    }, 250);
+
 
     try {
       const response = await fetch(`${API_BASE_URL}/github/scan?fullName=${repo.fullName}&repoId=${repo.id}&githubLogin=${activeOwnerTab}`, {
@@ -422,7 +424,7 @@ const Home = () => {
         }
       });
 
-      clearInterval(progressInterval);
+
       clearInterval(logInterval);
       setScanProgress(100);
       pollLogs();
@@ -459,29 +461,6 @@ const Home = () => {
         setSelectedThreat(mappedThreats[0]);
       } else {
         addLog("Scan finished. Clean codebase! No malware matches detected.", "success");
-        setPendingTransitionIds((prev) => {
-          const next = new Set(prev);
-          next.add(repo.id);
-          return next;
-        });
-        setTransitionCountdown((prev) => ({ ...prev, [repo.id]: 5 }));
-        const interval = setInterval(() => {
-          setTransitionCountdown((prev) => {
-            const current = prev[repo.id];
-            if (current === undefined || current <= 1) {
-              clearInterval(interval);
-              setPendingTransitionIds((pt) => {
-                const next = new Set(pt);
-                next.delete(repo.id);
-                return next;
-              });
-              const nextCount = { ...prev };
-              delete nextCount[repo.id];
-              return nextCount;
-            }
-            return { ...prev, [repo.id]: current - 1 };
-          });
-        }, 1000);
       }
     } catch (err: any) {
       clearInterval(logInterval);
@@ -604,7 +583,7 @@ const Home = () => {
 
 
         {/* Global Statistics */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 items-stretch">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 items-stretch">
 
           {/* My Repositories */}
           <div className="surface border border-border rounded-xl p-5 shadow-sm flex flex-col justify-between gap-3 relative overflow-hidden group hover:shadow-md transition-shadow">
@@ -687,7 +666,7 @@ const Home = () => {
               <h3 className={`text-3xl font-extrabold leading-none ${threatsCleanedCount > 0 ? 'text-emerald-500' : 'text-primary-text'}`}>
                 {threatsCleanedCount}
               </h3>
-              <p className="text-[11px] text-secondary-text mt-1.5">threats remediated</p>
+              <p className="text-[11px] text-secondary-text mt-1.5">threats removed</p>
             </div>
           </div>
 
@@ -696,9 +675,14 @@ const Home = () => {
             <div className={`absolute inset-x-0 bottom-0 h-[3px] rounded-b-xl ${rateLimit ? (rateLimit.remaining < 100 ? 'bg-gradient-to-r from-rose-500 to-red-500' : rateLimit.remaining < 500 ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'bg-gradient-to-r from-emerald-500 to-teal-500') : 'bg-gradient-to-r from-amber-500 to-orange-500'}`} />
             <div className="flex items-start justify-between">
               <p className="text-[11px] text-secondary-text font-bold uppercase tracking-widest leading-none">API Rate Limit</p>
-              <div className={`p-2 rounded-lg ${rateLimit ? (rateLimit.remaining < 100 ? 'bg-rose-500/10 text-rose-500' : rateLimit.remaining < 500 ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-500') : 'bg-amber-500/10 text-amber-500'}`}>
-                <RefreshCw className="w-4 h-4" />
-              </div>
+              <button 
+                type="button"
+                onClick={() => refetchRateLimit()}
+                disabled={isFetchingRateLimit}
+                className={`p-2 rounded-lg cursor-pointer transition-colors ${rateLimit ? (rateLimit.remaining < 100 ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20' : rateLimit.remaining < 500 ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20') : 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'} disabled:opacity-50`}
+              >
+                <RefreshCw className={`w-4 h-4 ${isFetchingRateLimit ? 'animate-spin' : ''}`} />
+              </button>
             </div>
             {rateLimit ? (
               <div className="space-y-2">
@@ -744,24 +728,8 @@ const Home = () => {
             </div>
 
             {/* Owner Tabs */}
-            {(ownerTabs.length > 0 || safeRepoIds.size > 0) && (
+            {ownerTabs.length > 0 && (
               <div className="flex gap-1 overflow-x-auto px-3 pt-3 pb-2 scrollbar-hide">
-                {safeRepoIds.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveOwnerTab("SAFE_REPOS");
-                      setSelectedRepoIds(new Set());
-                    }}
-                    className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer ${activeOwnerTab === "SAFE_REPOS"
-                        ? "bg-emerald-600 text-white"
-                        : "bg-light-background text-secondary-text hover:bg-border/50"
-                      }`}
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    Safe ({safeRepoIds.size})
-                  </button>
-                )}
                 {ownerTabs.map((tab) => (
                   <button
                     key={tab.login}
@@ -791,30 +759,21 @@ const Home = () => {
                   onChange={toggleSelectAll}
                   className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
                 />
-                <span className="text-sm font-semibold text-secondary-text">
+                <span className="text-sm font-semibold text-secondary-text leading-none">
                   {selectedRepoIds.size > 0 ? `${selectedRepoIds.size} selected` : "Select all"}
                 </span>
               </label>
 
               <div className="flex items-center gap-1.5">
-                {selectedRepoIds.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={bulkMarkSafe}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-md transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    <ShieldCheck className="w-2.5 h-2.5" />
-                    Mark Safe
-                  </button>
-                )}
+
                 {selectedRepoIds.size > 0 && (
                   <button
                     type="button"
                     onClick={bulkScan}
                     disabled={isBulkScanning || isScanning}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg shadow-sm hover:shadow transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                   >
-                    <Play className="w-2.5 h-2.5" />
+                    <Play className="w-4 h-4" />
                     Scan {selectedRepoIds.size}
                   </button>
                 )}
@@ -823,9 +782,9 @@ const Home = () => {
                     type="button"
                     onClick={bulkCleanAll}
                     disabled={isCleaning}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg shadow-sm hover:shadow transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                   >
-                    <Trash2 className="w-2.5 h-2.5" />
+                    <Trash2 className="w-4 h-4" />
                     Clean All
                   </button>
                 )}
@@ -849,12 +808,11 @@ const Home = () => {
               {visibleRepos.map((repo) => {
                 const isSelected = selectedRepoId === repo.id;
                 const isChecked = selectedRepoIds.has(repo.id);
-                const isSafe = safeRepoIds.has(repo.id);
 
                 return (
                   <div
                     key={repo.id}
-                    className={`px-5 py-4 transition-all duration-300 cursor-pointer relative group ${isSafe ? 'opacity-70 grayscale-[0.1]' : ''} ${isSelected
+                    className={`px-5 py-4 transition-all duration-300 cursor-pointer relative group ${isSelected
                         ? "bg-blue-500/10 dark:bg-blue-500/10 border-l-4 border-blue-500"
                         : "hover:bg-light-background/80 border-l-4 border-transparent"
                       }`}
@@ -882,7 +840,6 @@ const Home = () => {
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-primary-text truncate flex items-center gap-1.5">
                               {repo.name}
-                              {isSafe && <span className="bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded-full text-[9px] uppercase tracking-wider font-extrabold flex items-center gap-0.5"><ShieldCheck className="w-2 h-2" /> Safe</span>}
                             </p>
                             <p className="text-[10px] text-secondary-text mt-0.5 line-clamp-1">
                               {repo.description}
@@ -910,17 +867,6 @@ const Home = () => {
                         <div className="mt-2 flex items-center justify-between text-[10px] text-secondary-text font-semibold">
                           <div className="flex items-center gap-2">
                             <span>{repo.language}{repo.private ? " • 🔒 Private" : ""}</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleSafeRepo(repo.id);
-                              }}
-                              className={`opacity-0 group-hover:opacity-100 px-1.5 py-0.5 rounded flex items-center gap-1 transition-all cursor-pointer ${isSafe ? 'bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30' : 'bg-slate-200 dark:bg-slate-800 text-slate-500 hover:bg-slate-300 dark:hover:bg-slate-700'}`}
-                            >
-                              <ShieldCheck className="w-2 h-2" />
-                              {isSafe ? 'Safe' : 'Mark Safe'}
-                            </button>
                           </div>
                           <button
                             type="button"
@@ -929,10 +875,10 @@ const Home = () => {
                               startScan(repo.id);
                             }}
                             disabled={isScanning || isBulkScanning}
-                            className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-md flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-40"
+                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-md flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
                           >
-                            <Play className="w-2 h-2" />
-                            {isSafe ? 'Force Scan' : 'Scan'}
+                            <Play className="w-3 h-3" />
+                            Scan
                           </button>
                         </div>
                       </div>
@@ -1166,22 +1112,13 @@ const Home = () => {
                                 : "Zero malicious code indicators detected inside Javascript/TypeScript sources."
                               }
                             </p>
-                            {repo.status !== "idle" && pendingTransitionIds.has(repo.id) && (
-                              <div className="mt-4 flex flex-col items-center gap-2 bg-blue-500/10 dark:bg-blue-500/5 border border-blue-500/20 px-4 py-3 rounded-lg max-w-xs">
-                                <span className="text-xs text-primary-text font-semibold">
-                                  Archiving to Scanned Repos in {transitionCountdown[repo.id] !== undefined ? transitionCountdown[repo.id] : 5}s...
-                                </span>
+                            {repo.status !== "idle" && (
+                              <div className="mt-4 flex flex-col items-center gap-2 max-w-xs">
                                 <button
-                                  onClick={() => {
-                                    setPendingTransitionIds((pt) => {
-                                      const next = new Set(pt);
-                                      next.delete(repo.id);
-                                      return next;
-                                    });
-                                  }}
-                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-md transition-colors cursor-pointer"
+                                  onClick={() => archiveRepoAPI(repo.id)}
+                                  className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition-colors cursor-pointer shadow-sm shadow-blue-600/20"
                                 >
-                                  Move Now
+                                  Move to Scanned
                                 </button>
                               </div>
                             )}
