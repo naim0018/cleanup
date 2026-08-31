@@ -1,60 +1,59 @@
 import React from "react";
-import { ExternalLink, Globe, Sparkles, CheckCircle2 } from "lucide-react";
-import PrimaryButton from "@/common/PrimaryButton";
+import { Github, ShieldCheck, ArrowRight } from "lucide-react";
 
-export const HostedServiceBanner: React.FC = () => {
+const steps = [
+  {
+    num: "01",
+    icon: <Github className="w-7 h-7" />,
+    title: "Connect GitHub",
+    description: "Authorize Script Cleanup and select the repositories you want to protect.",
+  },
+  {
+    num: "02",
+    icon: <ShieldCheck className="w-7 h-7" />,
+    title: "Scan & Clean",
+    description: "We scan your code, detect threats, clean infected files, and commit the fixes.",
+  },
+  {
+    num: "03",
+    icon: <ShieldCheck className="w-7 h-7" />,
+    title: "Stay Protected",
+    description: "Git hooks and continuous scans keep your codebase clean and secure.",
+  },
+];
+
+export const HowItWorksSection: React.FC = () => {
   return (
-    <div className="surface shadow-all rounded-xl border border-border p-8 lg:p-10 w-full relative overflow-hidden">
-      {/* Accent Background Gradient Line */}
-      <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500" />
+    <div className="w-full space-y-10 py-6">
+      {/* Centered heading */}
+      <div className="text-center space-y-4">
+        <span className="inline-flex items-center px-3.5 py-1.5 rounded-full bg-primary-brand/10 text-primary-brand text-xs font-medium uppercase tracking-wider">
+          How It Works
+        </span>
+        <h2 className="text-2xl sm:text-3xl text-primary-text dark:text-white leading-tight">
+          Three simple steps
+        </h2>
+      </div>
 
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8 w-full">
-        <div className="space-y-4 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-small font-medium border border-emerald-500/20">
-            <Globe className="w-4 h-4" />
-            <span>Hosted Script Endpoint</span>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full items-start">
+        {steps.map((step, i) => (
+          <div key={i} className="flex flex-col items-center text-center gap-4 relative">
+            {/* Arrow connector */}
+            {i < steps.length - 1 && (
+              <div className="hidden md:block absolute top-8 -right-4 translate-x-1/2 z-10">
+                <ArrowRight className="w-5 h-5 text-secondary-text" />
+              </div>
+            )}
+
+            <div className="w-16 h-16 rounded-xl bg-primary-brand/5 dark:bg-primary-brand/10 border border-primary-brand/20 flex items-center justify-center text-primary-brand">
+              {step.icon}
+            </div>
+
+            <span className="text-xs font-medium text-primary-brand tracking-wide">{step.num}</span>
+            <h3 className="text-card text-primary-text dark:text-white">{step.title}</h3>
+            <p className="text-body text-secondary-text leading-relaxed">{step.description}</p>
           </div>
-
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-primary-text leading-tight">
-            Automated Repository Cleanup Script API
-          </h2>
-
-          <p className="text-body text-secondary-text leading-relaxed">
-            Need an online, cloud-hosted sanitization endpoint for your CI/CD pipelines, GitHub Actions, or webhooks? Access our hosted cleanup API directly at <span className="font-mono text-primary-brand">cleanupscript.vercel.app</span>.
-          </p>
-
-          <div className="flex flex-wrap items-center gap-4 text-small text-secondary-text">
-            <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              Webhook Compatible
-            </span>
-            <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              REST API Endpoints
-            </span>
-            <span className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              GitHub Actions Support
-            </span>
-          </div>
-        </div>
-
-        <div className="shrink-0 w-full sm:w-auto">
-          <a
-            href="https://cleanupscript.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full sm:w-auto block"
-          >
-            <PrimaryButton
-              title="Open Hosted Cleanup Service"
-              rightIcon={<ExternalLink className="w-4 h-4" />}
-              variant="primary"
-              size="lg"
-              className="w-full sm:w-auto"
-            />
-          </a>
-        </div>
+        ))}
       </div>
     </div>
   );

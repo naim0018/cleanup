@@ -141,7 +141,7 @@
 
   /* Brand Styling Custom Tokens */
   --brand-gradient: linear-gradient(180deg, #528FFF 0%, #004DDD 100%);
-  --layout-bg: #F6F9FF;
+  --layout-bg: #ffffff;
   --muted-blue: #8188A2;
 
   --status-success: #169E7B;

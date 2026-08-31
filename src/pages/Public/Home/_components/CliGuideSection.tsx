@@ -1,151 +1,83 @@
 import React, { useState } from "react";
-import { Terminal, Copy, CheckCircle2, ShieldCheck, FileCode, Check } from "lucide-react";
+import { Copy, Check, CheckCircle2, Code2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import PrimaryButton from "@/common/PrimaryButton";
 
-export const CliGuideSection: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<"global" | "dev" | "npx" | "pnpm">("global");
-  const [copiedTab, setCopiedTab] = useState<string | null>(null);
+export const NpmPackageSection: React.FC = () => {
+  const [copied, setCopied] = useState(false);
+  const cmd = "npm install -g malware-cleanup";
 
-  const commands = {
-    global: {
-      title: "Global Installation",
-      cmd: "npm install -g malware-cleanup",
-      desc: "Installs the scanner system-wide, enabling 'malware-cleanup' from any project terminal.",
-    },
-    dev: {
-      title: "Project Dev Dependency",
-      cmd: "npm install -D malware-cleanup",
-      desc: "Adds the scanner to package.json devDependencies and configures Git hooks for your project team.",
-    },
-    npx: {
-      title: "Instant NPX Execution",
-      cmd: "npx malware-cleanup",
-      desc: "Run a zero-install local workspace scan directly from your terminal.",
-    },
-    pnpm: {
-      title: "PNPM / Yarn Installation",
-      cmd: "pnpm add -g malware-cleanup",
-      desc: "Compatible with modern package managers for fast, deterministic installations.",
-    },
-  };
-
-  const handleCopy = (cmd: string, tabKey: string) => {
+  const handleCopy = () => {
     navigator.clipboard.writeText(cmd);
-    setCopiedTab(tabKey);
-    toast.success(`Copied command: ${cmd}`);
-    setTimeout(() => setCopiedTab(null), 2000);
+    setCopied(true);
+    toast.success("Copied to clipboard");
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="surface shadow-all rounded-xl border border-border p-8 lg:p-10 w-full">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start w-full">
-        {/* Left Information Column */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-500 text-small font-medium border border-indigo-500/20">
-            <Terminal className="w-4 h-4" />
-            <span>NPM Package & CLI Guide</span>
-          </div>
+    <div className="w-full rounded-xl  p-8 lg:p-10 border">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center w-full">
+        {/* Left side (Header & Command box) - Spans 6 cols */}
+        <div className="lg:col-span-6 space-y-5">
+          <span className="inline-flex items-center px-3.5 py-1.5 rounded-full bg-primary-brand/10 text-primary-brand text-xs font-medium uppercase tracking-wider">
+            NPM Package
+          </span>
 
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-primary-text leading-tight">
-            Command-Line Scanner & Local Git Hooks
+          <h2 className="text-2xl sm:text-3xl text-primary-text dark:text-white leading-tight">
+            Protect your workflow locally
           </h2>
 
           <p className="text-body text-secondary-text leading-relaxed">
-            Integrate malware auditing directly into your developer machine or CI/CD pipelines using our official NPM package. Automatically hooks into Git pre-push and post-pull triggers.
+            Install our lightweight npm package to enable real-time protection in your local development environment.
           </p>
 
-          <div className="space-y-3">
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-layout-bg border border-border">
-              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-small font-medium text-primary-text">Automatic Git Hook Injection</p>
-                <p className="text-xs text-secondary-text">Blocks infected code before it leaves your local repository.</p>
-              </div>
+          {/* Command box */}
+          <div className="bg-brand-gradient rounded-lg p-3.5 flex items-center justify-between">
+            <div className="flex items-center gap-3 overflow-x-auto min-w-0">
+              <span className="text-blue-100 font-mono text-sm select-none shrink-0">$</span>
+              <code className="text-white font-mono text-sm whitespace-nowrap">{cmd}</code>
             </div>
-
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-layout-bg border border-border">
-              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-small font-medium text-primary-text">AST Code Auditor</p>
-                <p className="text-xs text-secondary-text">Fast, AST-level detection for JS, TS, Python, and JSON configs.</p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3 p-3 rounded-lg bg-layout-bg border border-border">
-              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-small font-medium text-primary-text">CI/CD Pipeline Ready</p>
-                <p className="text-xs text-secondary-text">Return code 0 on clean code, exit non-zero when threats are detected.</p>
-              </div>
-            </div>
+            <PrimaryButton
+              onClick={handleCopy}
+              size="icon"
+              variant="primary"
+              className="bg-white/10 hover:bg-white/20 border-none shrink-0 text-white ml-3"
+              leftIcon={copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            />
           </div>
         </div>
 
-        {/* Right Tabbed Code Terminal */}
-        <div className="lg:col-span-7 w-full space-y-4">
-          {/* Tab Selector */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-border">
-            {(Object.keys(commands) as Array<keyof typeof commands>).map((key) => (
-              <button
-                key={key}
-                onClick={() => setActiveTab(key)}
-                className={`px-4 py-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  activeTab === key
-                    ? "bg-primary-brand text-white shadow-sm"
-                    : "text-secondary-text hover:bg-layout-bg hover:text-primary-text"
-                }`}
-              >
-                {commands[key].title}
-              </button>
+        {/* Right side (Checklist & Illustration) - Spans 6 cols */}
+        <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-12 gap-6 items-center">
+          {/* Checklist - Spans 7 cols */}
+          <div className="sm:col-span-7 space-y-4">
+            {[
+              "Pre Push Hook — Blocks malicious code",
+              "Pre Pull Hook — Scans before pulling",
+              "Lightweight — Fast and developer-friendly",
+            ].map((text, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-primary-brand shrink-0" />
+                <span className="text-body text-primary-text dark:text-slate-200">{text}</span>
+              </div>
             ))}
           </div>
 
-          {/* Active Command Box */}
-          <div className="space-y-2">
-            <p className="text-xs text-secondary-text">{commands[activeTab].desc}</p>
-            <div className="bg-slate-950 rounded-xl p-4 flex items-center justify-between border border-slate-800 shadow-inner group">
-              <div className="flex items-center gap-3 overflow-x-auto pr-2">
-                <span className="text-emerald-500 font-mono text-sm select-none">$</span>
-                <code className="text-emerald-400 font-mono text-sm whitespace-nowrap">
-                  {commands[activeTab].cmd}
-                </code>
+          {/* Illustration - Spans 5 cols */}
+          <div className="sm:col-span-5 flex justify-center">
+            <div className="relative w-32 h-32 flex items-center justify-center">
+              {/* Soft blue glow */}
+              <div className="absolute inset-0 bg-primary-brand/10 dark:bg-primary-brand/20 blur-2xl rounded-full" />
+
+              {/* Main Cube/Code block */}
+              <div className="relative w-20 h-20 bg-white dark:bg-slate-850 rounded-xl border border-slate-200 dark:border-slate-700 shadow-md flex items-center justify-center transition-transform hover:scale-105 duration-300">
+                <Code2 className="w-8 h-8 text-slate-500 dark:text-slate-400" />
               </div>
 
-              <button
-                onClick={() => handleCopy(commands[activeTab].cmd, activeTab)}
-                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors border border-slate-800 shrink-0 cursor-pointer"
-                title="Copy to clipboard"
-              >
-                {copiedTab === activeTab ? (
-                  <Check className="w-4 h-4 text-emerald-400" />
-                ) : (
-                  <Copy className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Simulated CLI Terminal Output Box */}
-          <div className="bg-slate-950 rounded-xl border border-slate-800 p-5 space-y-3 font-mono text-xs text-slate-300 shadow-lg">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-rose-500/80" />
-                <div className="w-3 h-3 rounded-full bg-amber-500/80" />
-                <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
-                <span className="text-slate-500 text-[11px] ml-2">malware-cleanup CLI v1.0.0</span>
+              {/* Floating Shield */}
+              <div className="absolute -bottom-2 -right-2 w-12 h-12 bg-brand-gradient rounded-lg shadow-lg flex items-center justify-center text-white border border-primary-brand/20 animate-bounce" style={{ animationDuration: '3s' }}>
+                <ShieldCheck className="w-6 h-6" />
               </div>
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>AST Active</span>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 leading-relaxed overflow-x-auto">
-              <p className="text-slate-500">[14:15:02] Initializing AST signature engine...</p>
-              <p className="text-slate-300">[14:15:03] Auditing local workspace files (42 files)...</p>
-              <p className="text-amber-400">[14:15:04] WARN: Suspicious eval buffer found in src/utils/legacy.js:L42</p>
-              <p className="text-emerald-400">[14:15:05] SUCCESS: Automatically sanitized legacy.js (0 malwares remaining)</p>
-              <p className="text-emerald-400 font-semibold mt-2">[14:15:05] Audit Complete: 0 threat indicators remaining. Workspace clean!</p>
             </div>
           </div>
         </div>
