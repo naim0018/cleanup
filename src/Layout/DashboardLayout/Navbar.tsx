@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Github, LogOut, Menu, ShieldCheck, LayoutDashboard, X } from "lucide-react";
+import { Github, LogOut, Menu, ShieldCheck, LayoutDashboard, X, Home as HomeIcon } from "lucide-react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 
 export default function Navbar() {
@@ -38,7 +38,8 @@ export default function Navbar() {
   };
 
   const menuItems = [
-    { label: "Dashboard", icon: LayoutDashboard, path: "/" },
+    { label: "Home", icon: HomeIcon, path: "/" },
+    { label: "Github Scan", icon: LayoutDashboard, path: "/github-scan" },
     { label: "Scanned Repos", icon: ShieldCheck, path: "/scanned" },
   ];
 

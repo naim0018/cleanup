@@ -7,6 +7,11 @@ const Home = Loadable(
   PublicSkeleton
 );
 
+const GithubScan = Loadable(
+  lazy(() => import("@/pages/Public/GithubScan/GithubScan")),
+  PublicSkeleton
+);
+
 const Scanned = Loadable(
   lazy(() => import("@/pages/Public/Scanned/Scanned")),
   PublicSkeleton
@@ -18,6 +23,11 @@ export const publicRoutes = [
     index: true,
     path: "/",
     element: <Home />,
+  },
+  {
+    label: "Github Scan",
+    path: "/github-scan",
+    element: <GithubScan />,
   },
   {
     label: "Scanned",

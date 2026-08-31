@@ -11,6 +11,7 @@ import { LoginSkeleton } from "@/common/Skeleton";
 // CORE COMPONENTS (Always included)
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/Auth/Login"));
+const ErrorPage = lazy(() => import("@/pages/ErrorPage"));
 
 const routes = createBrowserRouter([
   {
@@ -24,6 +25,11 @@ const routes = createBrowserRouter([
   {
     path: "/",
     element: <ProtectedRoutes />,
+    errorElement: (
+      <Suspense fallback={<div>Loading Error Page...</div>}>
+        <ErrorPage />
+      </Suspense>
+    ),
     children: [
       {
         path: "/",

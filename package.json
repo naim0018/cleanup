@@ -53,6 +53,9 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/preset-react": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
     "@eslint/js": "^9.21.0",
     "@tailwindcss/vite": "^4.0.12",
     "@types/node": "^22.13.10",

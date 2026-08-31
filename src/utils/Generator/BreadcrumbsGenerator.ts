@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 // utils/breadcrumbUtils.ts
 export const flattenRoutes = (routes: any[], base = "") => {
   let map: Record<string, { name: string; icon?: React.ReactNode }> = {};
